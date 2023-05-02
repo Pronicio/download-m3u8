@@ -2,11 +2,12 @@ const axios = require("axios");
 const { mkdirSync, existsSync, rmSync, writeFileSync } = require("fs");
 const term = require('terminal-kit').terminal;
 const notifier = require('node-notifier');
+const { exec } = require('child_process');
 
 const m3u8Parser = require("m3u8-parser");
 const parser = new m3u8Parser.Parser();
 
-const name = "Blue-Lock-20"
+const name = "test"
 const url = "https://uo-od2-5dp-cd.vmrange.lat/hls/xqx2oxhjozokjiqbte7cj6yfxmtfahmof7vlaczab,q462qsfdayscofjri3q,zo62qsfday4sul4hqwa,.urlset/master.m3u8"
 const headers = {
     "Accept": "*/*",
@@ -26,18 +27,24 @@ const params = {
     bestQuality: true
 }
 
+let currentItem = "";
+let progressBar;
+
 async function main() {
     let res = await get(url)
 
     parser.push(res.data);
     parser.end();
 
-    let playlist = ""
+    let playlist = "";
 
     if (params.bestQuality) {
         let highestResolution = 0
 
         for (const timeline of parser.manifest.playlists) {
+            if (!timeline.attributes) continue
+            if (!timeline.attributes.RESOLUTION) continue
+
             if (timeline.attributes.RESOLUTION.width > highestResolution) {
                 highestResolution = timeline.attributes.RESOLUTION.width;
                 playlist = timeline;
@@ -45,30 +52,41 @@ async function main() {
         }
     }
 
-    res = await get(playlist.uri)
+    const regexFindFileName = /([^\/.]+)$|([^\/]+)(\.[^\/.]+)$/g
+    const testUrl = /^(http(s):\/\/.)[-a-zA-Z0-9@:%._\+~#=]{2,256}\.[a-z]{2,6}\b([-a-zA-Z0-9@:%_\+.~#?&//=]*)$/g
+    let uri;
+
+    if (!playlist.uri.match(testUrl)) {
+        const find = url.search(regexFindFileName)
+        uri = url.slice(0, find) + playlist.uri;
+    } else {
+        uri = playlist.uri
+    }
+
+    res = await get(uri.trim())
 
     parser.push(res.data);
     parser.end();
 
-    const folderName = `${name}`
-
-    if (existsSync(folderName)) {
-        rmSync(folderName);
-        mkdirSync(folderName);
+    if (existsSync(name)) {
+        rmSync(name, { recursive: true });
+        mkdirSync(name);
+        mkdirSync(`${name}/segments`)
     } else {
-        mkdirSync(folderName);
+        mkdirSync(name);
+        mkdirSync(`${name}/segments`)
     }
 
-    const progressBar = term.progressBar({
+    const totalSegments = parser.manifest.segments.length;
+    let segmentsProcessed = 0
+
+    progressBar = term.progressBar({
         width: 80,
         title: 'Downloading...',
         eta: true,
-        percent: true
+        percent: true,
+        items: totalSegments
     });
-
-    const regexFindFileName = /([^\/.]+)$|([^\/]+)(\.[^\/.]+)$/g
-    const totalSegments = parser.manifest.segments.length;
-    let segmentsProcessed = 0
 
     for (const segment of parser.manifest.segments) {
         if (segment.attributes?.RESOLUTION?.width) continue
@@ -77,11 +95,13 @@ async function main() {
         res = await get(segment.uri, fileName)
 
         segmentsProcessed++
-        writeFileSync(`./${name}/${segmentsProcessed}.ts`, res.data, { encoding: 'binary' });
+        writeFileSync(`./${name}/segments/${segmentsProcessed}.ts`, res.data, { encoding: 'binary' });
         progressBar.update((segmentsProcessed * 100 / totalSegments) / 100);
+
+        //if (segmentsProcessed === 3) break //FOR TEST !!
     }
 
-    progressBar.stop();
+    await compile();
     notifier.notify(`${name} Ready !`);
 }
 
@@ -91,10 +111,38 @@ async function get(url, file) {
         url: url,
         headers: headers,
         responseType: file ? "arraybuffer" : "json",
+        onDownloadProgress: function ({ rate }) {
+            if (file && rate) {
+                const downloadSpeed = `${rate / 1000}Kb/s`
+                progressBar.itemDone(currentItem);
+                progressBar.startItem(downloadSpeed); currentItem = downloadSpeed;
+            }
+        },
         maxRate: [ 100 * 1024 * 1000 ],
     }).catch(e => {
         console.error(e)
     })
+}
+
+async function compile() {
+    progressBar.itemDone(currentItem)
+    progressBar.startItem("Grouping files..."); currentItem = "Grouping files...";
+    await exec(`copy /b *.ts all.ts`, { cwd: `${name}/segments` }, async (err, stdout, stderr) => {
+        if (err) {
+            console.error(`exec error: ${err}`);
+            return;
+        }
+
+        progressBar.itemDone(currentItem)
+        progressBar.startItem("FFmpeg..."); currentItem = "FFmpeg...";
+        await exec(`ffmpeg -i all.ts -c copy ../${name}.mp4`, { cwd: `${name}/segments` }, (error, stdout, stderr) => {
+            if (error) {
+                console.error(`exec error: ${error}`);
+            }
+        });
+
+        progressBar.update(1);
+    });
 }
 
 main().then()
