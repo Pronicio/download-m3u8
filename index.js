@@ -3,32 +3,27 @@ const { mkdirSync, existsSync, rmSync, writeFileSync } = require("fs");
 const term = require('terminal-kit').terminal;
 const notifier = require('node-notifier');
 const { exec } = require('child_process');
+require('dotenv').config()
 
 const m3u8Parser = require("m3u8-parser");
 const parser = new m3u8Parser.Parser();
 
-const name = "test"
-const url = "https://uo-od2-5dp-cd.vmrange.lat/hls/xqx2oxhjozokjiqbte7cj6yfxmtfahmof7vlaczab,q462qsfdayscofjri3q,zo62qsfday4sul4hqwa,.urlset/master.m3u8"
+const name = process.env.NAME
+const url = process.env.URL
 const headers = {
     "Accept": "*/*",
     "Accept-Encoding": "gzip, deflate, br",
     "Accept-Language": "fr;q=0.8",
     "Cache-Control": "no-cache",
     "Connection": "keep-alive",
-    "Origin": "https://vidmoly.to",
+    "Origin": process.env.ORIGIN,
     "Pragma": "no-cache",
-    "Referer": "https://vidmoly.to/",
+    "Referer": process.env.ORIGIN +"/",
     "Sec-Fetch-Dest": "empty",
     "Sec-Fetch-Mode": "cors",
     "Sec-Fetch-Site": "cross-site",
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/112.0.0.0 Safari/537.36"
 }
-const params = {
-    bestQuality: true
-}
-
-let currentItem = "";
-let progressBar;
 
 async function main() {
     let res = await get(url)
@@ -38,7 +33,7 @@ async function main() {
 
     let playlist = "";
 
-    if (params.bestQuality) {
+    if (Boolean(process.env.BEST_QUALITY)) {
         let highestResolution = 0
 
         for (const timeline of parser.manifest.playlists) {
@@ -80,7 +75,7 @@ async function main() {
     const totalSegments = parser.manifest.segments.length;
     let segmentsProcessed = 0
 
-    progressBar = term.progressBar({
+    const progressBar = term.progressBar({
         width: 80,
         title: 'Downloading...',
         eta: true,
@@ -98,10 +93,11 @@ async function main() {
         writeFileSync(`./${name}/segments/${segmentsProcessed}.ts`, res.data, { encoding: 'binary' });
         progressBar.update((segmentsProcessed * 100 / totalSegments) / 100);
 
-        //if (segmentsProcessed === 3) break //FOR TEST !!
+        term.moveTo(0, 3); term.eraseLine(); term.bold("Segment : ")(`${segmentsProcessed}/${totalSegments}`);
     }
 
     await compile();
+    progressBar.update(1);
     notifier.notify(`${name} Ready !`);
 }
 
@@ -114,8 +110,7 @@ async function get(url, file) {
         onDownloadProgress: function ({ rate }) {
             if (file && rate) {
                 const downloadSpeed = `${rate / 1000}Kb/s`
-                progressBar.itemDone(currentItem);
-                progressBar.startItem(downloadSpeed); currentItem = downloadSpeed;
+                term.moveTo(0, 2); term.eraseLine(); term.bold("Speed : ")(downloadSpeed);
             }
         },
         maxRate: [ 100 * 1024 * 1000 ],
@@ -125,23 +120,17 @@ async function get(url, file) {
 }
 
 async function compile() {
-    progressBar.itemDone(currentItem)
-    progressBar.startItem("Grouping files..."); currentItem = "Grouping files...";
     await exec(`copy /b *.ts all.ts`, { cwd: `${name}/segments` }, async (err, stdout, stderr) => {
         if (err) {
             console.error(`exec error: ${err}`);
             return;
         }
 
-        progressBar.itemDone(currentItem)
-        progressBar.startItem("FFmpeg..."); currentItem = "FFmpeg...";
         await exec(`ffmpeg -i all.ts -c copy ../${name}.mp4`, { cwd: `${name}/segments` }, (error, stdout, stderr) => {
             if (error) {
                 console.error(`exec error: ${error}`);
             }
         });
-
-        progressBar.update(1);
     });
 }
 
