@@ -93,10 +93,10 @@ async function main() {
         writeFileSync(`./${name}/segments/${segmentsProcessed}.ts`, res.data, { encoding: 'binary' });
         progressBar.update((segmentsProcessed * 100 / totalSegments) / 100);
 
-        term.moveTo(0, 3); term.eraseLine(); term.bold("Segment : ")(`${segmentsProcessed}/${totalSegments}`);
+        term.moveTo(0, 2); term.eraseLine(); term.bold("Segments : ")(`${segmentsProcessed}/${totalSegments}`);
     }
 
-    await compile();
+    await compile(totalSegments);
     progressBar.update(1);
     notifier.notify(`${name} Ready !`);
 }
@@ -109,8 +109,8 @@ async function get(url, file) {
         responseType: file ? "arraybuffer" : "json",
         onDownloadProgress: function ({ rate }) {
             if (file && rate) {
-                const downloadSpeed = `${rate / 1000}Kb/s`
-                term.moveTo(0, 2); term.eraseLine(); term.bold("Speed : ")(downloadSpeed);
+                const downloadSpeed = `${rate / 1000}Kb/s`;
+                term.moveTo(0, 3); term.eraseLine(); term.bold("Speed : ")(downloadSpeed);
             }
         },
         maxRate: [ 100 * 1024 * 1000 ],
@@ -119,8 +119,14 @@ async function get(url, file) {
     })
 }
 
-async function compile() {
-    await exec(`copy /b *.ts all.ts`, { cwd: `${name}/segments` }, async (err, stdout, stderr) => {
+async function compile(totalSegments) {
+    let allSegments = "";
+
+    for (let step = 1; step <= totalSegments; step++) {
+        allSegments = allSegments + `${step}.ts+`
+    }
+
+    await exec(`copy /b ${allSegments.slice(0, -1)} all.ts`, { cwd: `${name}/segments` }, async (err, stdout, stderr) => {
         if (err) {
             console.error(`exec error: ${err}`);
             return;
