@@ -1,3 +1,0 @@
-copy /b *.ts all.ts
-
-ffmpeg -i all.ts -c copy ../all.mp4
